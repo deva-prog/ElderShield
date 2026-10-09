@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ElderShield Live</title>
+<style>
+  body { font-family: Arial, sans-serif; background:#f2f5f9; margin:0; padding:20px; color:#222; }
+  h1 { margin:0 0 4px; }
+  .sub { color:#666; margin-bottom:16px; }
+  .banner { padding:14px; border-radius:10px; font-weight:bold; margin-bottom:16px; color:#fff; }
+  .STABLE { background:#2e9e4f; } .WARNING { background:#e6a100; } .ALERT { background:#d93a3a; }
+  .tiles { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+  .tile { background:#fff; border-radius:12px; padding:16px; flex:1; min-width:140px;
+          box-shadow:0 2px 8px rgba(0,0,0,.08); text-align:center; }
+  .tile .v { font-size:36px; font-weight:bold; }
+  .tile .l { color:#666; font-size:13px; }
+  .card { background:#fff; border-radius:12px; padding:16px; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+  canvas { width:100%; height:240px; }
+  button { padding:8px 16px; border:none; border-radius:8px; background:#1e66f5; color:#fff;
+           cursor:pointer; margin-top:12px; }
+  .note { font-size:12px; color:#888; margin-top:10px; }
+  .fallbtn { background:#d93a3a; margin-left:8px; }
+  .sms { background:#fff; border-left:6px solid #d93a3a; border-radius:10px; padding:12px 16px;
+         margin-top:16px; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+  .sms .t { font-size:12px; color:#888; }
+</style>
+</head>
+<body>
+<h1>ElderShield Live</h1>
+<div class="sub">Simulated patient stream (har 2 second mein update)</div>
+
+<div class="banner STABLE" id="banner">Waiting for data...</div>
+
+<div class="tiles">
+  <div class="tile"><div class="v" id="hr">-</div><div class="l">Heart rate (bpm)</div></div>
+  <div class="tile"><div class="v" id="bp">-</div><div class="l">Systolic BP (mmHg)</div></div>
+  <div class="tile"><div class="v" id="spo2">-</div><div class="l">SpO2 (%)</div></div>
+  <div class="tile"><div class="v" id="band">-</div><div class="l">Long-term stroke risk</div></div>
+</div>
+
+<div class="card">
+  <b>Systolic BP trend</b>
+  <canvas id="chart" width="900" height="240"></canvas>
+  <button onclick="resetSim()">Reset simulation</button>
+  <button class="fallbtn" onclick="simulateFall()">Simulate fall</button>
+  <button onclick="clearEvents()" style="background:#666;margin-left:8px">Clear alerts</button>
+  <div id="events"></div>
+  <div class="note">Data simulated hai. Alert rules demo ke liye simple hain, clinical nahi.</div>
+</div>
+
+<script>
+const API = "http://127.0.0.1:8000";
+const bpHistory = [];
+const MAX_POINTS = 40;
+
+async function tick() {
+  try {
+    const d = await (await fetch(API + "/live")).json();
+    document.getElementById("hr").textContent = d.heart_rate;
+    document.getElementById("bp").textContent = d.systolic_bp;
+    document.getElementById("spo2").textContent = d.spo2;
+    document.getElementById("band").textContent = d.band;
+
+    const b = document.getElementById("banner");
+    b.className = "banner " + d.status;
+    if (d.status === "ALERT") b.textContent = "ALERT (tick " + d.tick + "): " + d.alert;
+    else if (d.status === "WARNING") b.textContent = "WARNING (tick " + d.tick + "): vitals baseline se bigad rahe hain";
+    else b.textContent = "STABLE (tick " + d.tick + "): vitals normal hain";
+
+    bpHistory.push(d.systolic_bp);
+    if (bpHistory.length > MAX_POINTS) bpHistory.shift();
+    draw();
+  } catch (e) {
+    document.getElementById("banner").textContent = "API se connect nahi hua. Server chal raha hai?";
+  }
+}
+
+function draw() {
+  const c = document.getElementById("chart");
+  const g = c.getContext("2d");
+  const W = c.width, H = c.height, pad = 30;
+  g.clearRect(0, 0, W, H);
+  const lo = 110, hi = 200;
+  const y = v => H - pad - ((v - lo) / (hi - lo)) * (H - 2 * pad);
+
+  [[140, "#e6a100", "Warning 140"], [160, "#d93a3a", "Alert 160"]].forEach(([v, col, txt]) => {
+    g.strokeStyle = col; g.setLineDash([6, 4]);
+    g.beginPath(); g.moveTo(pad, y(v)); g.lineTo(W - 10, y(v)); g.stroke();
+    g.setLineDash([]); g.fillStyle = col; g.font = "12px Arial"; g.fillText(txt, pad + 4, y(v) - 4);
+  });
+
+  g.strokeStyle = "#1e66f5"; g.lineWidth = 2; g.beginPath();
+  bpHistory.forEach((v, i) => {
+    const x = pad + (i / (MAX_POINTS - 1)) * (W - pad - 10);
+    i === 0 ? g.moveTo(x, y(v)) : g.lineTo(x, y(v));
+  });
+  g.stroke(); g.lineWidth = 1;
+}
+
+async function resetSim() {
+  await fetch(API + "/live/reset", { method: "POST" });
+  bpHistory.length = 0;
+}
+
+async function simulateFall() {
+  await fetch(API + "/fall", { method: "POST" });
+  loadEvents();
+}
+
+async function clearEvents() {
+  await fetch(API + "/events/clear", { method: "POST" });
+  loadEvents();
+}
+
+async function loadEvents() {
+  try {
+    const list = await (await fetch(API + "/events")).json();
+    document.getElementById("events").innerHTML = list.map(e =>
+      `<div class="sms">
+         <div class="t">Caregiver SMS | ${e.time}</div>
+         <b>${e.type.replace("_", " ")}</b>: ${e.patient}<br>${e.message}
+       </div>`).join("");
+  } catch (err) {}
+}
+
+tick();
+setInterval(tick, 2000);
+loadEvents();
+setInterval(loadEvents, 3000);
+</script>
+</body>
+</html>

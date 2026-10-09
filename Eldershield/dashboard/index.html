@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ElderShield Dashboard</title>
+<style>
+  body { font-family: Arial, sans-serif; background:#f2f5f9; margin:0; padding:20px; color:#222; }
+  h1 { margin:0 0 4px; }
+  .sub { color:#666; margin-bottom:20px; }
+  .wrap { display:flex; gap:20px; flex-wrap:wrap; }
+  .card { background:#fff; border-radius:12px; padding:20px; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+  .form { flex:1; min-width:280px; max-width:340px; }
+  .result { flex:2; min-width:320px; }
+  label { display:block; margin-top:10px; font-size:13px; color:#555; }
+  input, select { width:100%; padding:7px; margin-top:3px; box-sizing:border-box; }
+  button { margin-top:16px; width:100%; padding:10px; background:#1e66f5; color:#fff;
+           border:none; border-radius:8px; font-size:15px; cursor:pointer; }
+  .score { font-size:56px; font-weight:bold; }
+  .band { display:inline-block; padding:6px 16px; border-radius:20px; color:#fff; font-weight:bold; }
+  .LOW { background:#2e9e4f; } .MEDIUM { background:#e6a100; } .HIGH { background:#d93a3a; }
+  .bar { height:14px; background:#e3e7ee; border-radius:7px; margin:14px 0; overflow:hidden; }
+  .fill { height:100%; width:0; transition:width .5s; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  td, th { text-align:left; padding:6px 4px; border-bottom:1px solid #eee; font-size:14px; }
+  .note { font-size:12px; color:#888; margin-top:14px; }
+  .up { color:#d93a3a; } .down { color:#2e9e4f; }
+</style>
+</head>
+<body>
+<h1>ElderShield</h1>
+<div class="sub">Digital twin: stroke risk decision-support (prototype)</div>
+
+<div class="wrap">
+  <div class="card form">
+    <b>Patient details</b>
+    <label>Age <input id="age" type="number" value="72"></label>
+    <label>Hypertension
+      <select id="hypertension"><option value="1">Yes</option><option value="0">No</option></select></label>
+    <label>Heart disease
+      <select id="heart_disease"><option value="0">No</option><option value="1">Yes</option></select></label>
+    <label>Avg glucose level <input id="glucose" type="number" value="110"></label>
+    <label>BMI <input id="bmi" type="number" value="31"></label>
+    <label>Smoking
+      <select id="smoking">
+        <option>smokes</option><option>never smoked</option><option>formerly smoked</option>
+      </select></label>
+    <button onclick="run()">Check risk</button>
+  </div>
+
+  <div class="card result">
+    <div id="empty">Left side mein details bharo aur "Check risk" dabao.</div>
+    <div id="out" style="display:none">
+      <div class="score" id="score"></div>
+      <span class="band" id="band"></span>
+      <div class="bar"><div class="fill" id="fill"></div></div>
+
+      <b>Risk kyun? (SHAP reasons)</b>
+      <table id="reasons"></table>
+
+      <br><b>What-if scenarios</b>
+      <table id="whatif"></table>
+
+      <div class="note" id="note"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "http://127.0.0.1:8000";
+const color = { LOW:"#2e9e4f", MEDIUM:"#e6a100", HIGH:"#d93a3a" };
+
+async function run() {
+  const body = {
+    age: +document.getElementById("age").value,
+    hypertension: +document.getElementById("hypertension").value,
+    heart_disease: +document.getElementById("heart_disease").value,
+    avg_glucose_level: +document.getElementById("glucose").value,
+    bmi: +document.getElementById("bmi").value,
+    smoking: document.getElementById("smoking").value
+  };
+  try {
+    const res = await fetch(API + "/whatif", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const d = await res.json();
+    show(d);
+  } catch (e) {
+    alert("API se connect nahi hua. Server chal raha hai?");
+  }
+}
+
+function show(d) {
+  document.getElementById("empty").style.display = "none";
+  document.getElementById("out").style.display = "block";
+
+  const c = d.current;
+  document.getElementById("score").textContent = c.score.toFixed(2);
+  const b = document.getElementById("band");
+  b.textContent = c.band + " RISK";
+  b.className = "band " + c.band;
+
+  const f = document.getElementById("fill");
+  f.style.width = (c.score * 100) + "%";
+  f.style.background = color[c.band];
+
+  document.getElementById("reasons").innerHTML =
+    c.reasons.map(r => {
+      const up = r.effect === "badhaya";
+      return `<tr><td>${r.feature}</td>
+        <td class="${up ? "up" : "down"}">${up ? "risk badhaya" : "risk ghataya"} (${r.impact > 0 ? "+" : ""}${r.impact})</td></tr>`;
+    }).join("");
+
+  document.getElementById("whatif").innerHTML =
+    "<tr><th>Scenario</th><th>Score</th><th>Change</th></tr>" +
+    d.scenarios.map(s => `<tr><td>${s.scenario}</td><td>${s.score.toFixed(2)}</td>
+      <td class="${s.change < 0 ? "down" : "up"}">${s.change > 0 ? "+" : ""}${s.change}</td></tr>`).join("");
+
+  document.getElementById("note").textContent = d.note;
+}
+</script>
+</body>
+</html>
